@@ -1,7 +1,4 @@
 using System.Diagnostics;
-using System.Diagnostics.Eventing.Reader;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace WorkerService1
 {
@@ -11,31 +8,31 @@ namespace WorkerService1
         private readonly IConfiguration _configuration;
         private class ProcessCpuRss
         {
-            private readonly string name;
-            private readonly int id;
-            private readonly double usageCpu;
-            private readonly double usageRss;
+            private readonly string _name;
+            private readonly int _id;
+            private readonly double _usageCpu;
+            private readonly double _usageRss;
             public ProcessCpuRss(string name, int id, double usageCpu, double usageRss)
             {
-                this.name = name;
-                this.id = id;
-                this.usageCpu = usageCpu;
-                this.usageRss = usageRss;
+                _name = name;
+                _id = id;
+                _usageCpu = usageCpu;
+                _usageRss = usageRss;
             }
             public override string ToString()
             {
                 string res = "";
-                res += "Name: " + name;
-                res += ", id: " + id;
+                res += "Name: " + _name;
+                res += ", id: " + _id;
 
-                if (Convert.ToInt32(usageCpu) == -1)
+                if (Convert.ToInt32(_usageCpu) == -1)
                     res += ", CPU % ERR_Acsess";
-                else if (Convert.ToInt32(usageCpu) == -2)
+                else if (Convert.ToInt32(_usageCpu) == -2)
                     res += ", CPU % ERR";
                 else
-                    res += ", CPU % " + usageCpu;
+                    res += ", CPU % " + _usageCpu;
 
-                res += ", RAM MB " + usageRss;
+                res += ", RAM MB " + _usageRss;
                 return res;
             }
         }
@@ -84,36 +81,30 @@ namespace WorkerService1
                 int interval = _configuration.GetSection("Date").GetSection("PollInterval").Get<int>();
                 string[] processNames = _configuration.GetSection("date").GetSection("InterestingProcesses").Get<string[]>();
 
-                Process[][]? processes = new Process[processNames.Length][];
+                Process[][] processes = new Process[processNames.Length][];
                 for (int i = 0; i < processNames.Length; i++)
                 {
                     processes[i] = Process.GetProcessesByName(processNames[i]);
                 }
 
-                Task<double>[][]? usageCpu = new Task<double>[processes.Length][];
+                Task<double>[][] usageCpu = new Task<double>[processes.Length][];
                 for(int i = 0; i < usageCpu.Length; i++)
                 {
-                    if (processes[i] != null)
-                    {
-                        Array.Resize(ref usageCpu[i], processes[i].Length);
+                    Array.Resize(ref usageCpu[i], processes[i].Length);
 
-                        for (int j = 0; j < processes[i].Length; j++)
-                            usageCpu[i][j] = UsageCpuAsync(processes[i][j], interval);
-                    }
+                    for (int j = 0; j < processes[i].Length; j++)
+                        usageCpu[i][j] = UsageCpuAsync(processes[i][j], interval);
                 }
 
                 LinkedList<ProcessCpuRss> processesCpuRss = new LinkedList<ProcessCpuRss>();
                 for(int i = 0; i < processes.Length; i++)
                 {
-                    if (processes[i] is not null)
+                    for (int j = 0; j < processes[i].Length; j++)
                     {
-                        for (int j = 0; j < processes[i].Length; j++)
-                        {
-                            processesCpuRss.AddLast(new ProcessCpuRss(processes[i][j].ProcessName,
-                                                                    processes[i][j].Id,
-                                                                    usageCpu[i][j].Result,
-                                                                    processes[i][j].PagedMemorySize64 / (1024 * 1024.0)));
-                        }
+                        processesCpuRss.AddLast(new ProcessCpuRss(processes[i][j].ProcessName,
+                                                                processes[i][j].Id,
+                                                                usageCpu[i][j].Result,
+                                                                processes[i][j].PagedMemorySize64 / (1024 * 1024.0)));
                     }
                 }
 
