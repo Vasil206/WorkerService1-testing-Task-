@@ -1,10 +1,18 @@
 using WorkerService1;
 
-IHost host = Host.CreateDefaultBuilder(args)
-    .ConfigureServices(services =>
+IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
+    .ConfigureServices((context, services) =>
     {
         services.AddHostedService<Worker>();
-    })
-    .Build();
+        services.Configure<Data>(context.Configuration.GetSection("Data"));
+    });
 
+
+IHost host = hostBuilder.Build();
 await host.RunAsync();
+
+public class Data
+{
+    public int Interval { get; set; }
+    public string[] ProcessNames { get; set; } = null!;
+}
