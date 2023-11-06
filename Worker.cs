@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Options;
 
@@ -7,61 +8,46 @@ namespace WorkerService1
     {
         private readonly ILogger<Worker> _logger;
         private readonly IOptionsMonitor<Data> _dataMonitor;
-        private class ProcessCpuRss
+        private const int ErrAccess = -1;
+        private const int Err = -2;
+        private static string ToLogFormatStr(string name, int id, double usageCpu, double usageRss)
         {
-            private readonly string _name;
-            private readonly int _id;
-            private readonly double _usageCpu;
-            private readonly double _usageRss;
-            public ProcessCpuRss(string name, int id, double usageCpu, double usageRss)
-            {
-                _name = name;
-                _id = id;
-                _usageCpu = usageCpu;
-                _usageRss = usageRss;
-            }
-            public override string ToString()
-            {
-                string res = "";
-                res += "Name: " + _name;
-                res += ", id: " + _id;
+            string res = $"Name: {name}, Id: {id}, CPU %: ";
 
-                if (Convert.ToInt32(_usageCpu) == -1)
-                    res += ", CPU % ERR_Access";
-                else if (Convert.ToInt32(_usageCpu) == -2)
-                    res += ", CPU % ERR";
-                else
-                    res += ", CPU % " + _usageCpu;
+            if (Convert.ToInt32(usageCpu) == ErrAccess)
+                res += "ERR_Access";
+            else if (Convert.ToInt32(usageCpu) == Err)
+                res += "ERR";
+            else
+                res += usageCpu;
 
-                res += ", RAM MB " + _usageRss;
-                return res;
-            }
+            res += $", RSS MB: {usageRss}";
+            return res ;
         }
         private static async Task<double> UsageCpuAsync(Process proc, int interval)
         {
             try
             {
                 TimeSpan startUsageCpu = proc.TotalProcessorTime;
-                Stopwatch stopWatch = new Stopwatch();
-                stopWatch.Start();
+                long startTime = Environment.TickCount64;
 
                 await Task.Delay(interval / 2);
 
-                stopWatch.Stop();
                 TimeSpan endUsageCpu = proc.TotalProcessorTime;
 
                 double usedCpuMs = (endUsageCpu - startUsageCpu).TotalMilliseconds;
-                double totalMsPassed = stopWatch.ElapsedMilliseconds;
+                double totalMsPassed = Environment.TickCount64 - startTime;
                 double usageCpuTotal = usedCpuMs / totalMsPassed / Environment.ProcessorCount;
 
                 return usageCpuTotal * 100;
             }
-            catch(Exception ex)
+            catch (Win32Exception ex) when(ex.NativeErrorCode == 5)
             {
-                if (ex.Message == "Access is denied.")
-                    return -1;
-                else
-                    return -2;
+                return ErrAccess;
+            }
+            catch
+            {
+                return Err;
             }
 
         }
@@ -74,52 +60,56 @@ namespace WorkerService1
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            PeriodicTimer timer = new(TimeSpan.FromMilliseconds(_dataMonitor.CurrentValue.Interval));
-            int prevInterval = _dataMonitor.CurrentValue.Interval;
-            while (await timer.WaitForNextTickAsync(stoppingToken))
+            try
             {
-
-                int interval = _dataMonitor.CurrentValue.Interval;
-                if (interval != prevInterval)
+                PeriodicTimer timer = new(TimeSpan.FromMilliseconds(10));
+                int prevInterval = 10;
+                while (await timer.WaitForNextTickAsync(stoppingToken))
                 {
-                    prevInterval = interval;
-                    timer.Dispose();
-                    timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
-                }
 
-                string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
-                Process[][] processes = new Process[processNames.Length][];
-                for (int i = 0; i < processNames.Length; i++)
-                {
-                    processes[i] = Process.GetProcessesByName(processNames[i]);
-                }
-
-                Task<double>[][] usageCpu = new Task<double>[processes.Length][];
-                for(int i = 0; i < usageCpu.Length; i++)
-                {
-                    Array.Resize(ref usageCpu[i], processes[i].Length);
-
-                    for (int j = 0; j < processes[i].Length; j++)
-                        usageCpu[i][j] = UsageCpuAsync(processes[i][j], interval);
-                }
-
-                LinkedList<ProcessCpuRss> processesCpuRss = new();
-                for(int i = 0; i < processes.Length; i++)
-                {
-                    for (int j = 0; j < processes[i].Length; j++)
+                    int interval = _dataMonitor.CurrentValue.Interval;
+                    if (interval != prevInterval)
                     {
-                        processesCpuRss.AddLast(new ProcessCpuRss(processes[i][j].ProcessName,
-                                                                processes[i][j].Id,
-                                                                usageCpu[i][j].Result,
-                                                                processes[i][j].WorkingSet64 / (1024 * 1024.0)));
+                        prevInterval = interval;
+                        timer.Dispose();
+                        timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
                     }
-                }
 
-                string logInform = "";
-                foreach (ProcessCpuRss processCpuRss in processesCpuRss)
-                    logInform += processCpuRss.ToString() + "\n\t";
-              
-                _logger.LogInformation(logInform);
+                    string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
+                    Process[][] processes = new Process[processNames.Length][];
+                    for (int i = 0; i < processNames.Length; i++)
+                    {
+                        processes[i] = Process.GetProcessesByName(processNames[i]);
+                    }
+
+                    Task<double>[][] usageCpu = new Task<double>[processes.Length][];
+                    for (int i = 0; i < usageCpu.Length; i++)
+                    {
+                        Array.Resize(ref usageCpu[i], processes[i].Length);
+
+                        for (int j = 0; j < processes[i].Length; j++)
+                            usageCpu[i][j] = UsageCpuAsync(processes[i][j], interval);
+                    }
+
+                    string logInform = "";
+                    for (int i = 0; i < processes.Length; i++)
+                    {
+                        for (int j = 0; j < processes[i].Length; j++)
+                        {
+                            logInform += ToLogFormatStr(processes[i][j].ProcessName,
+                                processes[i][j].Id,
+                                usageCpu[i][j].Result,
+                                processes[i][j].WorkingSet64 / (1024 * 1024.0));
+                            logInform += "\n\t";
+                        }
+                    }
+
+                    _logger.LogInformation(logInform);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex.Message);
             }
         }
     }
