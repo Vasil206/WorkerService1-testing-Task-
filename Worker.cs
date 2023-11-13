@@ -93,6 +93,10 @@ namespace WorkerService1
                             usageCpu[i][j] = UsageCpuAsync(processes[i][j], interval);  //starting of the calculating of CPU usage
                     }
 
+                    //wait for the calculating of CPU usage
+                    foreach (Task[] useCpu in usageCpu)
+                        Task.WaitAll(useCpu);
+
                     //making the string for logging
                     string logInform = "";
                     for (int i = 0; i < processes.Length; i++)
@@ -101,7 +105,7 @@ namespace WorkerService1
                         {
                             logInform += ToLogFormatStr(processes[i][j].ProcessName,
                                 processes[i][j].Id,
-                                usageCpu[i][j].Result,  //waiting and getting CPU usage
+                                usageCpu[i][j].Result,  //getting CPU usage
                                 processes[i][j].WorkingSet64 / (1024 * 1024.0));
                             logInform += "\n\t";
                         }
