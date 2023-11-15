@@ -1,24 +1,21 @@
-using App.Metrics.AspNetCore;
-using App.Metrics.Formatters.Prometheus;
-using Microsoft.AspNetCore.Hosting;
+using Prometheus;
 using WorkerService1;
 
+Metrics.SuppressDefaultMetrics(new SuppressDefaultMetricOptions
+{
+    SuppressEventCounters = true,
+    SuppressMeters = true,
+    SuppressProcessMetrics = true
+});
+
+using var server = new KestrelMetricServer(port: 1234);
+server.Start();
+
 IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
-    .UseMetricsWebTracking()
-    .UseMetrics(options =>
-    {
-        options.EndpointOptions = endpointOptions =>
-        {
-            endpointOptions.MetricsEndpointOutputFormatter = new MetricsPrometheusTextOutputFormatter();
-            endpointOptions.MetricsEndpointOutputFormatter = new MetricsPrometheusProtobufOutputFormatter();
-            endpointOptions.EnvironmentInfoEndpointEnabled = false;
-        };
-    })
     .ConfigureServices((context, services) =>
     {
         services.AddHostedService<Worker>();
         services.Configure<Data>(context.Configuration.GetSection("Data"));
-        services.AddMetrics();
     });
 
 

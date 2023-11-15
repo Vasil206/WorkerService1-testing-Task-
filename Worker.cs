@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Options;
+using Prometheus;
+using Metrics = Prometheus.Metrics;
 
 namespace WorkerService1
 {
@@ -8,22 +10,10 @@ namespace WorkerService1
     {
         private readonly ILogger<Worker> _logger;
         private readonly IOptionsMonitor<Data> _dataMonitor;
+        private readonly Gauge _usageCpuGauge;
+        private readonly Gauge _usageMemoryGauge;
         private const int ErrAccess = -1;
         private const int Err = -2;
-        private static string ToLogFormatStr(string name, int id, double usageCpu, double usageRss)
-        {
-            string res = $"Name: {name}, Id: {id}, CPU %: ";
-
-            if (Convert.ToInt32(usageCpu) == ErrAccess)
-                res += "ERR_Access";
-            else if (Convert.ToInt32(usageCpu) == Err)
-                res += "ERR";
-            else
-                res += usageCpu;
-
-            res += $", RSS MB: {usageRss}";
-            return res ;
-        }
         private static async Task<double> UsageCpuAsync(Process proc, int interval)
         {
             try
@@ -56,6 +46,12 @@ namespace WorkerService1
         {
             _logger = logger;
             _dataMonitor = dataMonitor;
+            _usageCpuGauge = Metrics.CreateGauge(name: "processes_usage_cpu_percent",
+                                                 help: "percentage of CPU using by interested processes",
+                                                 labelNames: new[] { "name", "id" });
+            _usageMemoryGauge = Metrics.CreateGauge(name: "processes_usage_rss_mb",
+                                                    help: "resident set size of interested processes in MB",
+                                                    labelNames: new[] { "name", "id" });
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -98,20 +94,16 @@ namespace WorkerService1
                         Task.WaitAll(useCpu);
 
                     //making the string for logging
-                    string logInform = "";
                     for (int i = 0; i < processes.Length; i++)
                     {
                         for (int j = 0; j < processes[i].Length; j++)
                         {
-                            logInform += ToLogFormatStr(processes[i][j].ProcessName,
-                                processes[i][j].Id,
-                                usageCpu[i][j].Result,  //getting CPU usage
-                                processes[i][j].WorkingSet64 / (1024 * 1024.0));
-                            logInform += "\n\t";
+                            string[] gaugeLabels = new[] { processes[i][j].ProcessName, Convert.ToString(processes[i][j].Id) };
+                            _usageCpuGauge.Labels(gaugeLabels).Set(usageCpu[i][j].Result);
+                            _usageMemoryGauge.Labels(gaugeLabels).Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
                         }
                     }
 
-                    _logger.LogInformation(logInform);
                 }
             }
             catch (Exception ex)
