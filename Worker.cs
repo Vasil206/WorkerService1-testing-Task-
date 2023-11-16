@@ -12,8 +12,10 @@ namespace WorkerService1
         private readonly IOptionsMonitor<Data> _dataMonitor;
         private readonly Gauge _usageCpuGauge;
         private readonly Gauge _usageMemoryGauge;
+        private bool _dataChanged;
         private const int ErrAccess = -1;
         private const int Err = -2;
+
         private static async Task<double> UsageCpuAsync(Process proc, int interval)
         {
             try
@@ -44,35 +46,32 @@ namespace WorkerService1
 
         public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
         {
+            _dataChanged = false;
             _logger = logger;
+
             _dataMonitor = dataMonitor;
+            _dataMonitor.OnChange(_ => _dataChanged = true);
+
+            string[] metricLabels = new[] { "name", "id" };
             _usageCpuGauge = Metrics.CreateGauge(name: "processes_usage_cpu_percent",
                                                  help: "percentage of CPU using by interested processes",
-                                                 labelNames: new[] { "name", "id" });
+                                                 metricLabels);
             _usageMemoryGauge = Metrics.CreateGauge(name: "processes_usage_rss_mb",
                                                     help: "resident set size of interested processes in MB",
-                                                    labelNames: new[] { "name", "id" });
+                                                    metricLabels);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
             {
-                PeriodicTimer timer = new(TimeSpan.FromMilliseconds(10));
-                int prevInterval = 10;
+                string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
+                int interval = _dataMonitor.CurrentValue.Interval;
+
+                PeriodicTimer timer = new(TimeSpan.FromMilliseconds(interval));
                 while (await timer.WaitForNextTickAsync(stoppingToken))
                 {
-                    //checking on interval's changing
-                    int interval = _dataMonitor.CurrentValue.Interval;
-                    if (interval != prevInterval)
-                    {
-                        prevInterval = interval;
-                        timer.Dispose();
-                        timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
-                    }
-
                     //going from names to Process
-                    string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
                     Process[][] processes = new Process[processNames.Length][];
                     for (int i = 0; i < processNames.Length; i++)
                     {
@@ -91,9 +90,9 @@ namespace WorkerService1
 
                     //wait for the calculating of CPU usage
                     foreach (Task[] useCpu in usageCpu)
-                        Task.WaitAll(useCpu);
+                        Task.WaitAll(useCpu,stoppingToken);
 
-                    //making the string for logging
+                    //making metrics
                     for (int i = 0; i < processes.Length; i++)
                     {
                         for (int j = 0; j < processes[i].Length; j++)
@@ -104,6 +103,22 @@ namespace WorkerService1
                         }
                     }
 
+                    //on data change
+                    if (_dataChanged)
+                    {
+                        _dataChanged = false;
+                        interval = _dataMonitor.CurrentValue.Interval;
+                        processNames=_dataMonitor.CurrentValue.ProcessNames;
+                        timer.Dispose();
+                        timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
+                        foreach (Process[] process in processes)
+                            foreach (Process proc in process)
+                            {
+                                string[] gaugeLabels = new[] { proc.ProcessName, Convert.ToString(proc.Id) };
+                                _usageCpuGauge.Labels(gaugeLabels).Remove();
+                                _usageMemoryGauge.Labels(gaugeLabels).Remove();
+                            }
+                    }
                 }
             }
             catch (Exception ex)
