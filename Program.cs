@@ -22,6 +22,8 @@ IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
 IHost host = hostBuilder.Build();
 await host.RunAsync();
 
+Console.ReadKey();
+
 public class Data
 {
     public int Interval { get; set; }

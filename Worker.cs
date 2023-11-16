@@ -26,22 +26,18 @@ namespace WorkerService1
                 await Task.Delay(interval / 2);
 
                 TimeSpan endUsageCpu = proc.TotalProcessorTime;
+                long endTime = Environment.TickCount64;
 
                 double usedCpuMs = (endUsageCpu - startUsageCpu).TotalMilliseconds;
-                double totalMsPassed = Environment.TickCount64 - startTime;
+                double totalMsPassed = endTime - startTime;
                 double usageCpuTotal = usedCpuMs / totalMsPassed / Environment.ProcessorCount;
 
                 return usageCpuTotal * 100;
             }
-            catch (Win32Exception ex) when(ex.NativeErrorCode == 5)   //Access is denied
+            catch (Win32Exception ex)
             {
-                return ErrAccess;
+                return -ex.NativeErrorCode;
             }
-            catch   //Other
-            {
-                return Err;
-            }
-
         }
 
         public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
@@ -98,6 +94,15 @@ namespace WorkerService1
                         for (int j = 0; j < processes[i].Length; j++)
                         {
                             string[] gaugeLabels = new[] { processes[i][j].ProcessName, Convert.ToString(processes[i][j].Id) };
+
+                            if (usageCpu[i][j].Result < 0)
+                            {
+                                string warning = processes[i][j].ProcessName + " ; " +
+                                                 processes[i][j].Id + " : " +
+                                                 new Win32Exception(-Convert.ToInt32(usageCpu[i][j].Result)).Message;
+                                _logger.LogWarning(warning);
+                            }
+
                             _usageCpuGauge.Labels(gaugeLabels).Set(usageCpu[i][j].Result);
                             _usageMemoryGauge.Labels(gaugeLabels).Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
                         }
