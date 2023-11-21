@@ -110,10 +110,17 @@ namespace WorkerService1
                                                      .Message;
                                 _logger.LogWarning(warning);
                             }
-
-                            _usageCpuGauge.Labels(processesNameId[i][j]).Set(usageCpu[i][j].Result);
-                            _usageMemoryGauge.Labels(processesNameId[i][j])
-                                             .Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
+                            else if (processes[i][j].HasExited)
+                            {
+                                _usageCpuGauge.Labels(processesNameId[i][j]).Remove();
+                                _usageMemoryGauge.Labels(processesNameId[i][j]).Remove();
+                            }
+                            else
+                            {
+                                _usageCpuGauge.Labels(processesNameId[i][j]).Set(usageCpu[i][j].Result);
+                                _usageMemoryGauge.Labels(processesNameId[i][j])
+                                    .Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
+                            }
                         }
                     }
 
