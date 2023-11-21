@@ -20,7 +20,7 @@ IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
 
 
 IHost host = hostBuilder.Build();
-await host.RunAsync();
+host.Run();
 
 Console.ReadKey();
 
