@@ -68,12 +68,17 @@ namespace WorkerService1
                 {
                     //going from names to Process
                     Process[][] processes = new Process[processNames.Length][];
-                    for (int i = 0; i < processNames.Length; i++)
+                    if (processNames[0] == "--all")
+                        processes[0] = Process.GetProcesses();
+                    else
                     {
-                        processes[i] = Process.GetProcessesByName(processNames[i]);
+                        for (int i = 0; i < processNames.Length; i++)
+                        {
+                            processes[i] = Process.GetProcessesByName(processNames[i]);
+                        }
                     }
-                    
-                    
+
+
                     //making the array of async tasks with calculating of CPU usage; array of name and id
                     Task<double>[][] usageCpu = new Task<double>[processes.Length][];
                     string[][][] processesNameId = new string[processes.Length][][];
