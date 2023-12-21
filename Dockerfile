@@ -15,6 +15,6 @@ WORKDIR /app
 COPY --from=build /app .
 
 EXPOSE 1234:1234
-VOLUME worker-app:/app
+VOLUME /app
 
 ENTRYPOINT ["dotnet", "WorkerService1.dll"]
