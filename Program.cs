@@ -1,29 +1,29 @@
-using Prometheus;
-using WorkerService1;
+using Microsoft.AspNetCore.Hosting;
 
-Metrics.SuppressDefaultMetrics(new SuppressDefaultMetricOptions
+namespace WorkerService1
 {
-    SuppressEventCounters = true,
-    SuppressMeters = true,
-    SuppressProcessMetrics = true
-});
-
-using var server = new KestrelMetricServer(port: 1234);
-server.Start();
-
-IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
-    .ConfigureServices((context, services) =>
+    internal class Program
     {
-        services.AddHostedService<Worker>();
-        services.Configure<Data>(context.Configuration.GetSection("Data"));
-    });
+        public static void Main(string[] args)
+        {
+            CreateHostBuilder(args).Build().Run();
+        }
 
+        private static IHostBuilder CreateHostBuilder(string[] args)
+        {
+            return Host.CreateDefaultBuilder(args)
+                .ConfigureWebHostDefaults(webBuilder =>
+                    {
+                        webBuilder.UseUrls("http://localhost:1234");
+                        webBuilder.UseStartup<Startup>();
+                    }
+                );
+        }
+    }
 
-IHost host = hostBuilder.Build();
-host.Run();
-
-public class Data
-{
-    public int Interval { get; set; }
-    public string[] ProcessNames { get; set; } = default!;
+    public class Data
+    {
+        public  int Interval { get; set; }
+        public string[] ProcessNames { get; set; } = default!;
+    }
 }
