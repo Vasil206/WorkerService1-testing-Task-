@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Options;
 using Prometheus;
-using Metrics = Prometheus.Metrics;
 
 namespace WorkerService1
 {
@@ -10,9 +9,11 @@ namespace WorkerService1
     {
         private readonly ILogger<Worker> _logger;
         private readonly IOptionsMonitor<Data> _dataMonitor;
+        private bool _dataChanged;
+
         private readonly Gauge _usageCpuGauge;
         private readonly Gauge _usageMemoryGauge;
-        private bool _dataChanged;
+
         private static async Task<double> UsageCpuAsync(Process proc, int interval)
         {
             try
@@ -48,14 +49,14 @@ namespace WorkerService1
             _dataMonitor.OnChange(_ => _dataChanged = true);
 
             string[] metricLabels = new[] { "name", "id" };
-            _usageCpuGauge = Metrics.CreateGauge(name: "processes_usage_cpu_percent",
+            _usageCpuGauge = Metrics.CreateGauge(name: "worker_processes_usage_cpu_percent",
                                                  help: "percentage of CPU using by interested processes",
                                                  metricLabels);
-            _usageMemoryGauge = Metrics.CreateGauge(name: "processes_usage_rss_mb",
+            _usageMemoryGauge = Metrics.CreateGauge(name: "worker_processes_usage_rss_mb",
                                                     help: "resident set size of interested processes in MB",
                                                     metricLabels);
         }
-
+        
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
@@ -114,11 +115,10 @@ namespace WorkerService1
                                                  new Win32Exception(-Convert.ToInt32(usageCpu[i][j].Result))
                                                      .Message;
                                 _logger.LogWarning(warning);
-                            }
-                            else if (processes[i][j].HasExited)
-                            {
+
                                 _usageCpuGauge.Labels(processesNameId[i][j]).Remove();
                                 _usageMemoryGauge.Labels(processesNameId[i][j]).Remove();
+
                             }
                             else
                             {
