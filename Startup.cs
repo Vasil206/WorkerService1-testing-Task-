@@ -15,6 +15,7 @@ namespace WorkerService1
         {
             services.Configure<Data>(_config.GetSection("Data"));
             services.AddHostedService<Worker>();
+            services.AddHostedService<Load>();
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)

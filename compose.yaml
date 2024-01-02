@@ -4,11 +4,58 @@ services:
     build:
       context: .
       target: final
+    expose:
+      - 1234
     ports:
       - 1234:1234
     restart: unless-stopped
     volumes:
-      - worker-app:/app
+      - worker_app:/app
+    networks:
+      - monitor_net
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    expose:
+      - 9090
+    ports:
+      - 9090:9090
+    networks:
+      - monitor_net
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    expose:
+      - 3000
+    ports:
+      - 3000:3000
+    networks:
+      - monitor_net
 
 volumes:
-  worker-app:
+  worker_app:
+  grafana_data:
+  prometheus_data:
+
+networks:
+  monitor_net:
+    driver: bridge

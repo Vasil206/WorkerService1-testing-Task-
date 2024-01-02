@@ -56,11 +56,61 @@ namespace WorkerService1
                                                     help: "resident set size of interested processes in MB",
                                                     metricLabels);
         }
-        
+
+        private void ClearMetrics(string[][][] currentLabels, string[][][] prevLabels)
+        {
+            List<string[]> deleteMetrics = new();
+            foreach (string[][] labelsName in prevLabels)
+            {
+                foreach (string[] labelNameId in labelsName)
+                {
+                    bool labelNotExists = true;
+                    foreach (string[][] currentLabelName in currentLabels)
+                    {
+                        bool labelExists = false;
+                        foreach (string[] currentLabelNameId in currentLabelName)
+                        {
+                            if (currentLabelNameId.SequenceEqual(labelNameId))
+                            {
+                                labelExists = true;
+                                labelNotExists = false;
+                                break;
+                            }
+                        }
+                        if(labelExists)
+                            break;
+                    }
+
+                    if (labelNotExists)
+                    {
+                        deleteMetrics.Add(labelNameId);
+                    }
+                    
+                }
+            }
+
+            foreach (string[] metricLabel in deleteMetrics)
+            {
+                _usageCpuGauge.RemoveLabelled(metricLabel);
+                _usageMemoryGauge.RemoveLabelled(metricLabel);
+            }
+        }
+
+        private static long AllElementsQuantity(string[][][] arr)
+        {
+            long quantity = 0;
+            foreach (string[][] elements in arr)
+            {
+                quantity += elements.GetLength(0);
+            }
+            return quantity;
+        }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
             {
+                string[][][] processesNameId = { new[] { new[] { "", "" } } };
+
                 string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
                 int interval = _dataMonitor.CurrentValue.Interval;
 
@@ -79,25 +129,28 @@ namespace WorkerService1
                         }
                     }
 
-
                     //making the array of async tasks with calculating of CPU usage; array of name and id
                     Task<double>[][] usageCpu = new Task<double>[processes.Length][];
-                    string[][][] processesNameId = new string[processes.Length][][];
+                    string[][][] newProcessesNameId = new string[processes.Length][][];
 
                     for (int i = 0; i < usageCpu.Length; i++)
                     {
                         Array.Resize(ref usageCpu[i], processes[i].Length);
-                        Array.Resize(ref processesNameId[i], processes[i].Length);
+                        Array.Resize(ref newProcessesNameId[i], processes[i].Length);
 
                         for (int j = 0; j < processes[i].Length; j++)
                         {
                             usageCpu[i][j] =
                                 UsageCpuAsync(processes[i][j], interval); //starting of the calculating of CPU usage
 
-                            processesNameId[i][j] = new[]
+                            newProcessesNameId[i][j] = new[]
                                 { processes[i][j].ProcessName, Convert.ToString(processes[i][j].Id) };
                         }
                     }
+
+                    if (AllElementsQuantity(newProcessesNameId) != AllElementsQuantity(processesNameId)) 
+                        ClearMetrics(newProcessesNameId,processesNameId);
+                    newProcessesNameId.CopyTo(processesNameId,0);
                     
                     //wait for the calculating of CPU usage
                     foreach (Task[] useCpu in usageCpu)
@@ -112,20 +165,12 @@ namespace WorkerService1
                             {
                                 string warning = processesNameId[i][j][0] + "  " +
                                                  processesNameId[i][j][1] + " : " +
-                                                 new Win32Exception(-Convert.ToInt32(usageCpu[i][j].Result))
-                                                     .Message;
+                                                 new Win32Exception(-Convert.ToInt32(usageCpu[i][j].Result)).Message;
                                 _logger.LogWarning(warning);
-
-                                _usageCpuGauge.Labels(processesNameId[i][j]).Remove();
-                                _usageMemoryGauge.Labels(processesNameId[i][j]).Remove();
-
                             }
-                            else
-                            {
-                                _usageCpuGauge.Labels(processesNameId[i][j]).Set(usageCpu[i][j].Result);
-                                _usageMemoryGauge.Labels(processesNameId[i][j])
-                                    .Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
-                            }
+                            _usageCpuGauge.Labels(processesNameId[i][j]).Set(usageCpu[i][j].Result);
+                            _usageMemoryGauge.Labels(processesNameId[i][j])
+                                .Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
                         }
                     }
 
@@ -133,17 +178,13 @@ namespace WorkerService1
                     if (_dataChanged)
                     {
                         _dataChanged = false;
-                        interval = _dataMonitor.CurrentValue.Interval;
                         processNames = _dataMonitor.CurrentValue.ProcessNames;
-                        timer.Dispose();
-                        timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
-
-                        foreach (string[][] process in processesNameId)
-                            foreach (string[] proc in process)
-                            {
-                                _usageCpuGauge.Labels(proc).Remove();
-                                _usageMemoryGauge.Labels(proc).Remove();
-                            }
+                        if (interval != _dataMonitor.CurrentValue.Interval)
+                        {
+                            interval = _dataMonitor.CurrentValue.Interval;
+                            timer.Dispose();
+                            timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
+                        }
                     }
                 }
             }

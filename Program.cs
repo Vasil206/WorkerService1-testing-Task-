@@ -14,7 +14,7 @@ namespace WorkerService1
             return Host.CreateDefaultBuilder(args)
                 .ConfigureWebHostDefaults(webBuilder =>
                     {
-                        webBuilder.UseUrls("http://localhost:1234");
+                        webBuilder.UseUrls("http://_:1234");
                         webBuilder.UseStartup<Startup>();
                     }
                 );
