@@ -19,6 +19,7 @@ services:
     container_name: prometheus
     volumes:
       - prometheus_data:/prometheus
+      - ./etc_promrtheus:/etc/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -39,6 +40,8 @@ services:
     container_name: grafana
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./etc_grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./etc_grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
     environment:
       - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
