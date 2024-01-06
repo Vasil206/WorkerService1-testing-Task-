@@ -14,17 +14,17 @@ namespace WorkerService1
         private readonly Gauge _usageCpuGauge;
         private readonly Gauge _usageMemoryGauge;
 
-        private static async Task<double> UsageCpuAsync(Process proc, int interval)
+        private async Task<double> UsageCpuAsync(Process proc, int interval)
         {
             try
             {
+                if (proc.HasExited) return 0;
                 TimeSpan startUsageCpu = proc.TotalProcessorTime;
                 long startTime = Environment.TickCount64;
 
                 await Task.Delay(interval / 2);
 
                 if (proc.HasExited) return 0;
-                
                 TimeSpan endUsageCpu = proc.TotalProcessorTime;
                 long endTime = Environment.TickCount64;
 
@@ -37,6 +37,11 @@ namespace WorkerService1
             catch (Win32Exception ex)
             {
                 return -ex.NativeErrorCode;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex.Message);
+                return -100;
             }
         }
 

@@ -11,16 +11,20 @@ namespace WorkerService1
             }
         }
 
-        private void MemoryCpuLoad(long timeExec)
+        private static void MemoryCpuLoad(long timeExec)
         {
             DateTime start = DateTime.Now;
-            long[] arr = new long[100000000];
+            long[] arr = GC.AllocateArray<long>(100000000);
             long i = 1;
             while (i <= 100000000 && (DateTime.Now - start).TotalMilliseconds <= timeExec) 
             {
                 arr[i] = arr[i - 1] + 1;
                 i++;
             }
+
+            Task.Delay(Math.Max(Convert.ToInt32(timeExec - (DateTime.Now - start).TotalMilliseconds), 0));
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -30,7 +34,7 @@ namespace WorkerService1
             {
                 try
                 {
-                    long timeExecMilliseconds = rand.Next(1, 170000);
+                    long timeExecMilliseconds = rand.Next(1, 160000);
                     if (rand.Next(2) is 1)
                     {
                         CpuLoad(timeExecMilliseconds);

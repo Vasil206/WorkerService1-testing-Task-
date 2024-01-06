@@ -18,14 +18,14 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
+  "id": 3,
   "links": [],
   "liveNow": false,
   "panels": [
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -105,7 +105,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+            "uid": "PBFA97CFB590B2093"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
@@ -115,17 +115,17 @@
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
-          "refId": "RSS usage",
+          "refId": "A",
           "useBackend": false
         }
       ],
-      "title": "RSS usage",
+      "title": "RSS",
       "type": "timeseries"
     },
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -205,7 +205,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+            "uid": "PBFA97CFB590B2093"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
@@ -215,17 +215,17 @@
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
-          "refId": "sum RSS usage",
+          "refId": "A",
           "useBackend": false
         }
       ],
-      "title": "summary RSS usage",
+      "title": "summary RSS",
       "type": "timeseries"
     },
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -305,7 +305,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+            "uid": "PBFA97CFB590B2093"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
@@ -315,7 +315,7 @@
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
-          "refId": "CPU usage",
+          "refId": "A",
           "useBackend": false
         }
       ],
@@ -325,7 +325,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -405,7 +405,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "bb206d97-7052-45c0-8316-e445e59b99de"
+            "uid": "PBFA97CFB590B2093"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
@@ -415,7 +415,7 @@
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
-          "refId": "sum CPU usage",
+          "refId": "A",
           "useBackend": false
         }
       ],
@@ -423,20 +423,20 @@
       "type": "timeseries"
     }
   ],
-  "refresh": "10s",
+  "refresh": "auto",
   "schemaVersion": 38,
   "tags": [],
   "templating": {
     "list": []
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-3h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
-  "title": "CPU_RSS_Wacher",
-  "uid": "a9b2d904-ec8e-4ec0-acdd-585ae91095ce",
+  "title": "CPU_RSS_Wacher1",
+  "uid": "di243940-37bb-46d9-8816-7af081ade6cc",
   "version": 2,
   "weekStart": ""
 }
