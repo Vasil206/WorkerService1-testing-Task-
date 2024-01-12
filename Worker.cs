@@ -41,7 +41,7 @@ namespace WorkerService1
             catch (Exception ex)
             {
                 _logger.LogError(ex.Message);
-                return -100;
+                return -40;
             }
         }
 
