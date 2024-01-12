@@ -6,25 +6,25 @@ namespace WorkerService1
         private static void CpuLoad(long timeExec)
         {
             DateTime start = DateTime.Now;
-            while ((DateTime.Now-start).TotalMilliseconds<=timeExec)
+            while ((DateTime.Now-start).TotalSeconds<=timeExec)
             {
             }
         }
 
         private static void MemoryCpuLoad(long timeExec)
         {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             DateTime start = DateTime.Now;
-            long[] arr = GC.AllocateArray<long>(100000000);
+            long[] arr = GC.AllocateArray<long>(100000000,true);
             long i = 1;
-            while (i <= 100000000 && (DateTime.Now - start).TotalMilliseconds <= timeExec) 
+            while (i <= 100000000 && (DateTime.Now - start).TotalSeconds <= timeExec) 
             {
                 arr[i] = arr[i - 1] + 1;
                 i++;
             }
 
-            Task.Delay(Math.Max(Convert.ToInt32(timeExec - (DateTime.Now - start).TotalMilliseconds), 0));
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
+            Task.Delay(Math.Max(Convert.ToInt32(timeExec - (DateTime.Now - start).TotalSeconds)*1000, 0));
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -34,14 +34,14 @@ namespace WorkerService1
             {
                 try
                 {
-                    long timeExecMilliseconds = rand.Next(1, 160000);
+                    long timeExecSeconds = rand.Next(1, 170);
                     if (rand.Next(2) is 1)
                     {
-                        CpuLoad(timeExecMilliseconds);
+                        CpuLoad(timeExecSeconds);
                     }
                     else
                     {
-                        MemoryCpuLoad(timeExecMilliseconds);
+                        MemoryCpuLoad(timeExecSeconds);
                     }
                 }
                 catch (Exception e)

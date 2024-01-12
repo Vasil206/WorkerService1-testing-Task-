@@ -65,30 +65,16 @@ namespace WorkerService1
         private void ClearMetrics(string[][][] currentLabels, string[][][] prevLabels)
         {
             List<string[]> deleteMetrics = new();
-            foreach (string[][] labelsName in prevLabels)
+            foreach (string[][] prevLabelsName in prevLabels)
             {
-                foreach (string[] labelNameId in labelsName)
+                foreach (string[] prevLabelNameId in prevLabelsName)
                 {
-                    bool labelNotExists = true;
-                    foreach (string[][] currentLabelName in currentLabels)
-                    {
-                        bool labelExists = false;
-                        foreach (string[] currentLabelNameId in currentLabelName)
-                        {
-                            if (currentLabelNameId.SequenceEqual(labelNameId))
-                            {
-                                labelExists = true;
-                                labelNotExists = false;
-                                break;
-                            }
-                        }
-                        if(labelExists)
-                            break;
-                    }
+                    bool labelExists = currentLabels.Any(currentLabelsName =>
+                        currentLabelsName.Any(currentLabelNameId => currentLabelNameId.SequenceEqual(prevLabelNameId)));
 
-                    if (labelNotExists)
+                    if (!labelExists)
                     {
-                        deleteMetrics.Add(labelNameId);
+                        deleteMetrics.Add(prevLabelNameId);
                     }
                     
                 }
@@ -99,16 +85,6 @@ namespace WorkerService1
                 _usageCpuGauge.RemoveLabelled(metricLabel);
                 _usageMemoryGauge.RemoveLabelled(metricLabel);
             }
-        }
-
-        private static long AllElementsQuantity(string[][][] arr)
-        {
-            long quantity = 0;
-            foreach (string[][] elements in arr)
-            {
-                quantity += elements.GetLength(0);
-            }
-            return quantity;
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -153,8 +129,7 @@ namespace WorkerService1
                         }
                     }
 
-                    if (AllElementsQuantity(newProcessesNameId) != AllElementsQuantity(processesNameId)) 
-                        ClearMetrics(newProcessesNameId,processesNameId);
+                    ClearMetrics(newProcessesNameId,processesNameId);
                     newProcessesNameId.CopyTo(processesNameId,0);
                     
                     //wait for the calculating of CPU usage

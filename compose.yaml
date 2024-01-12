@@ -6,8 +6,6 @@ services:
       target: final
     expose:
       - 1234
-    ports:
-      - 1234:1234
     restart: unless-stopped
     volumes:
       - worker_app:/app
@@ -19,7 +17,7 @@ services:
     container_name: prometheus
     volumes:
       - prometheus_data:/prometheus
-      - ./etc_promrtheus:/etc/prometheus
+      - ./docker_bind_data/etc/prometheus:/etc/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -30,8 +28,6 @@ services:
     restart: unless-stopped
     expose:
       - 9090
-    ports:
-      - 9090:9090
     networks:
       - monitor_net
 
@@ -40,17 +36,26 @@ services:
     container_name: grafana
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./etc_grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-      - ./etc_grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./docker_bind_data/etc/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./docker_bind_data/etc/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
     environment:
-      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
     restart: unless-stopped
     expose:
       - 3000
+    networks:
+      - monitor_net
+
+  web_server:
+    container_name: nginx_server
+    image: nginx
+    volumes:
+      - ./docker_bind_data/etc/nginx:/etc/nginx/conf.d
+      - ./docker_bind_data/nginx/html/index.html:/usr/share/nginx/html/index.html
+    restart: unless-stopped
     ports:
-      - 3000:3000
+      - 80:80
     networks:
       - monitor_net
 
