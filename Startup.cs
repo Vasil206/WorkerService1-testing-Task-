@@ -2,6 +2,8 @@
 using Microsoft.AspNetCore.Hosting;
 using Prometheus;
 
+//using Prometheus;
+
 namespace WorkerService1
 {
     internal class Startup
@@ -13,9 +15,10 @@ namespace WorkerService1
         }
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddMetrics();
             services.Configure<Data>(_config.GetSection("Data"));
             services.AddHostedService<Worker>();
-            services.AddHostedService<Load>();
+            //services.AddHostedService<Load>();
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
@@ -29,8 +32,8 @@ namespace WorkerService1
 
             app.UseEndpoints(endpoints =>
             {
-                Metrics.SuppressDefaultMetrics();
-                endpoints.MapMetrics();
+                //Metrics.SuppressDefaultMetrics();
+                //endpoints.MapMetrics();
             });
         }
     }

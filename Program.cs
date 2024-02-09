@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 
 namespace WorkerService1
@@ -11,13 +12,12 @@ namespace WorkerService1
 
         private static IHostBuilder CreateHostBuilder(string[] args)
         {
-            return Host.CreateDefaultBuilder(args)
-                .ConfigureWebHostDefaults(webBuilder =>
-                    {
-                        webBuilder.UseUrls("http://_:1234");
-                        webBuilder.UseStartup<Startup>();
-                    }
-                );
+            return Host.CreateDefaultBuilder(args).
+                ConfigureWebHostDefaults(webBuilder =>
+                {
+                    webBuilder.UseUrls("http://_:1234");
+                    webBuilder.UseStartup<Startup>();
+                });
         }
     }
 

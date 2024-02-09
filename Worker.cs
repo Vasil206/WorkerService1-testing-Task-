@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Options;
-using Prometheus;
 
 namespace WorkerService1
 {
@@ -11,38 +11,47 @@ namespace WorkerService1
         private readonly IOptionsMonitor<Data> _dataMonitor;
         private bool _dataChanged;
 
-        private readonly Gauge _usageCpuGauge;
-        private readonly Gauge _usageMemoryGauge;
+        private readonly Meter _meter;
 
-        private async Task<double> UsageCpuAsync(Process proc, int interval)
+        private async Task<KeyValuePair<NameId, CpuRssValue>> DoWorkAsync(Process proc, int interval)
         {
+            double usageCpuTotal;
+            NameId nameId = new NameId(proc.Id, proc.ProcessName);
             try
             {
-                if (proc.HasExited) return 0;
+                if (proc.HasExited) throw new Exception("process has exited");
                 TimeSpan startUsageCpu = proc.TotalProcessorTime;
                 long startTime = Environment.TickCount64;
 
                 await Task.Delay(interval / 2);
 
-                if (proc.HasExited) return 0;
+                if (proc.HasExited) throw new Exception("process has exited");
                 TimeSpan endUsageCpu = proc.TotalProcessorTime;
                 long endTime = Environment.TickCount64;
 
                 double usedCpuMs = (endUsageCpu - startUsageCpu).TotalMilliseconds;
                 double totalMsPassed = endTime - startTime;
-                double usageCpuTotal = usedCpuMs / totalMsPassed / Environment.ProcessorCount;
-
-                return usageCpuTotal * 100;
+                usageCpuTotal = usedCpuMs / totalMsPassed / Environment.ProcessorCount * 100;
             }
             catch (Win32Exception ex)
             {
-                return -ex.NativeErrorCode;
+                usageCpuTotal = -ex.NativeErrorCode;
+                _logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}");
+            }
+            catch when (proc.HasExited)
+            {
+                usageCpuTotal = 0;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex.Message);
-                return -40;
+                usageCpuTotal = -404;
             }
+
+            if(!proc.HasExited)
+                proc.Refresh();
+            return new KeyValuePair<NameId, CpuRssValue>(nameId,
+                                                        new CpuRssValue(usageCpuTotal, proc.WorkingSet64 / (1024 * 1024.0)));
         }
 
         public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
@@ -52,45 +61,49 @@ namespace WorkerService1
 
             _dataMonitor = dataMonitor;
             _dataMonitor.OnChange(_ => _dataChanged = true);
-
-            string[] metricLabels = new[] { "name", "id" };
-            _usageCpuGauge = Metrics.CreateGauge(name: "worker_processes_usage_cpu_percent",
-                                                 help: "percentage of CPU using by interested processes",
-                                                 metricLabels);
-            _usageMemoryGauge = Metrics.CreateGauge(name: "worker_processes_usage_rss_mb",
-                                                    help: "resident set size of interested processes in MB",
-                                                    metricLabels);
+            _meter = new("cpu_rss_watcher");
         }
 
-        private void ClearMetrics(string[][][] currentLabels, string[][][] prevLabels)
+        private void ClearMeasurements(ref Dictionary<NameId, CpuRssValue> measurements)
         {
-            List<string[]> deleteMetrics = new();
-            foreach (string[][] prevLabelsName in prevLabels)
+            var keys = measurements.Keys;
+            foreach (var key in keys)
             {
-                foreach (string[] prevLabelNameId in prevLabelsName)
-                {
-                    bool labelExists = currentLabels.Any(currentLabelsName =>
-                        currentLabelsName.Any(currentLabelNameId => currentLabelNameId.SequenceEqual(prevLabelNameId)));
-
-                    if (!labelExists)
-                    {
-                        deleteMetrics.Add(prevLabelNameId);
-                    }
-                    
-                }
-            }
-
-            foreach (string[] metricLabel in deleteMetrics)
-            {
-                _usageCpuGauge.RemoveLabelled(metricLabel);
-                _usageMemoryGauge.RemoveLabelled(metricLabel);
+                if (measurements[key].IsUsed)
+                    measurements.Remove(key);
+                else
+                    measurements[key].IsUsed = true;
             }
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
             {
-                string[][][] processesNameId = { new[] { new[] { "", "" } } };
+                Dictionary<NameId, CpuRssValue> measurements = new();
+                _meter.CreateObservableGauge("worker_cpu_usage", () =>
+                {
+                    LinkedList<Measurement<double>> result = new();
+                    foreach (var measurement in measurements)
+                    {
+                        result.AddLast(new Measurement<double>(measurement.Value.Cpu,
+                            new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
+                            new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
+                    }
+
+                    return result;
+                }, unit: "%");
+                _meter.CreateObservableGauge("worker_rss_usage", () =>
+                {
+                    LinkedList<Measurement<double>> result = new();
+                    foreach (var measurement in measurements)
+                    {
+                        result.AddLast(new Measurement<double>(measurement.Value.Rss,
+                            new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
+                            new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
+                    }
+
+                    return result;
+                }, unit: "MiB");
 
                 string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
                 int interval = _dataMonitor.CurrentValue.Interval;
@@ -110,48 +123,41 @@ namespace WorkerService1
                         }
                     }
 
-                    //making the array of async tasks with calculating of CPU usage; array of name and id
-                    Task<double>[][] usageCpu = new Task<double>[processes.Length][];
-                    string[][][] newProcessesNameId = new string[processes.Length][][];
+                    //making the array of async tasks with calculating of CPU usage;
+                    var metricsLoop = new Task<KeyValuePair<NameId, CpuRssValue>>[processes.Length][];
 
-                    for (int i = 0; i < usageCpu.Length; i++)
+                    for (int i = 0; i < metricsLoop.Length; i++)
                     {
-                        Array.Resize(ref usageCpu[i], processes[i].Length);
-                        Array.Resize(ref newProcessesNameId[i], processes[i].Length);
-
-                        for (int j = 0; j < processes[i].Length; j++)
+                        Array.Resize(ref metricsLoop[i], processes[i].Length);
+                        for (int j = 0; j < metricsLoop[i].Length; j++)
                         {
-                            usageCpu[i][j] =
-                                UsageCpuAsync(processes[i][j], interval); //starting of the calculating of CPU usage
-
-                            newProcessesNameId[i][j] = new[]
-                                { processes[i][j].ProcessName, Convert.ToString(processes[i][j].Id) };
+                            metricsLoop[i][j] =
+                                DoWorkAsync(processes[i][j], interval); //starting of the calculating of CPU usage
                         }
                     }
 
-                    ClearMetrics(newProcessesNameId,processesNameId);
-                    newProcessesNameId.CopyTo(processesNameId,0);
-                    
-                    //wait for the calculating of CPU usage
-                    foreach (Task[] useCpu in usageCpu)
-                        Task.WaitAll(useCpu, stoppingToken);
-                    
-                    //making metrics
-                    for (int i = 0; i < processesNameId.Length; i++)
+                    ClearMeasurements(ref measurements);
+
+                    //wait while works
+                    foreach (Task[] useCpu in metricsLoop)
+                        Task.WaitAll(useCpu);
+
+                    //add to measurements
+                    foreach (var results in metricsLoop)
+                    foreach (var result in results)
                     {
-                        for (int j = 0; j < processesNameId[i].Length; j++)
+                        bool isAdded = false;
+                        foreach (var measurement in measurements)
                         {
-                            if (usageCpu[i][j].Result < 0)
+                            if (SequenceEqual(measurement.Key, result.Result.Key))
                             {
-                                string warning = processesNameId[i][j][0] + "  " +
-                                                 processesNameId[i][j][1] + " : " +
-                                                 new Win32Exception(-Convert.ToInt32(usageCpu[i][j].Result)).Message;
-                                _logger.LogWarning(warning);
+                                measurements[measurement.Key] = result.Result.Value;
+                                isAdded = true;
+                                break;
                             }
-                            _usageCpuGauge.Labels(processesNameId[i][j]).Set(usageCpu[i][j].Result);
-                            _usageMemoryGauge.Labels(processesNameId[i][j])
-                                .Set(processes[i][j].WorkingSet64 / (1024 * 1024.0));
                         }
+                        if(!isAdded)
+                            measurements.Add(result.Result.Key,result.Result.Value);
                     }
 
                     //on data change
@@ -172,6 +178,38 @@ namespace WorkerService1
             {
                 _logger.LogError(ex.Message);
             }
+            finally
+            {
+                _meter.Dispose();
+            }
+        }
+
+        private bool SequenceEqual(NameId source, NameId target)
+        {
+            return source.Name == target.Name && source.Id == target.Id;
+        }
+    }
+    class NameId
+    {
+        public readonly int Id;
+        public readonly string Name;
+        public NameId(int id, string name)
+        {
+            Id = id;
+            Name = name;
+        }
+    }
+
+    class CpuRssValue
+    {
+        public readonly double Cpu;
+        public readonly double Rss;
+        public bool IsUsed;
+        public CpuRssValue(double cpu, double rss)
+        {
+            Cpu = cpu;
+            Rss = rss;
+            IsUsed = false;
         }
     }
 }
