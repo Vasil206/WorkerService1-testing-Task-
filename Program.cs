@@ -1,5 +1,6 @@
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
 
 namespace WorkerService1
 {
@@ -7,6 +8,11 @@ namespace WorkerService1
     {
         public static void Main(string[] args)
         {
+            using MeterProvider meterProvider = Sdk.CreateMeterProviderBuilder()
+                .AddMeter("cpu_rss_watcher")
+                .AddPrometheusHttpListener(options => options.UriPrefixes = new[] { "http://localhost:1234/" }) 
+                .Build();
+
             CreateHostBuilder(args).Build().Run();
         }
 
@@ -15,7 +21,6 @@ namespace WorkerService1
             return Host.CreateDefaultBuilder(args).
                 ConfigureWebHostDefaults(webBuilder =>
                 {
-                    webBuilder.UseUrls("http://_:1234");
                     webBuilder.UseStartup<Startup>();
                 });
         }
