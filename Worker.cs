@@ -36,7 +36,7 @@ namespace WorkerService1
             catch (Win32Exception ex)
             {
                 usageCpuTotal = -ex.NativeErrorCode;
-                _logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}");
+                _logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}    CPU");
             }
             catch when (proc.HasExited)
             {
@@ -48,10 +48,26 @@ namespace WorkerService1
                 usageCpuTotal = -404;
             }
 
-            if(!proc.HasExited)
-                proc.Refresh();
+            double rss;
+            try
+            {
+                if (!proc.HasExited)
+                    proc.Refresh();
+                rss = proc.WorkingSet64 / (1024 * 1024.0);
+            }
+            catch (Win32Exception ex)
+            {
+                _logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}    RSS");
+                rss = -ex.NativeErrorCode;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex.Message);
+                rss = -404;
+            }
+
             return new KeyValuePair<NameId, CpuRssValue>(nameId,
-                                                        new CpuRssValue(usageCpuTotal, proc.WorkingSet64 / (1024 * 1024.0)));
+                                                        new CpuRssValue(usageCpuTotal, rss));
         }
 
         public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
@@ -80,7 +96,7 @@ namespace WorkerService1
             try
             {
                 Dictionary<NameId, CpuRssValue> measurements = new();
-                _meter.CreateObservableGauge("worker_cpu_usage", () =>
+                _meter.CreateObservableGauge("worker_processes_usage_cpu", () =>
                 {
                     LinkedList<Measurement<double>> result = new();
                     foreach (var measurement in measurements)
@@ -92,7 +108,7 @@ namespace WorkerService1
 
                     return result;
                 }, unit: "%");
-                _meter.CreateObservableGauge("worker_rss_usage", () =>
+                _meter.CreateObservableGauge("worker_processes_usage_rss", () =>
                 {
                     LinkedList<Measurement<double>> result = new();
                     foreach (var measurement in measurements)
@@ -103,7 +119,7 @@ namespace WorkerService1
                     }
 
                     return result;
-                }, unit: "MiB");
+                }, unit: "mb");
 
                 string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
                 int interval = _dataMonitor.CurrentValue.Interval;
@@ -149,7 +165,7 @@ namespace WorkerService1
                         bool isAdded = false;
                         foreach (var measurement in measurements)
                         {
-                            if (SequenceEqual(measurement.Key, result.Result.Key))
+                            if (measurement.Key.SequenceEqual(result.Result.Key))
                             {
                                 measurements[measurement.Key] = result.Result.Value;
                                 isAdded = true;
@@ -184,10 +200,6 @@ namespace WorkerService1
             }
         }
 
-        private bool SequenceEqual(NameId source, NameId target)
-        {
-            return source.Name == target.Name && source.Id == target.Id;
-        }
     }
     class NameId
     {
@@ -197,6 +209,10 @@ namespace WorkerService1
         {
             Id = id;
             Name = name;
+        }
+        public bool SequenceEqual( NameId target)
+        {
+            return Name == target.Name && Id == target.Id;
         }
     }
 

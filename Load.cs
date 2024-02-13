@@ -1,5 +1,4 @@
-﻿
-namespace WorkerService1
+﻿namespace WorkerService1
 {
     internal class Load : BackgroundService
     {
@@ -13,8 +12,11 @@ namespace WorkerService1
 
         private static void MemoryCpuLoad(long timeExec)
         {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+
             DateTime start = DateTime.Now;
-            List<long> arr = new List<long>(100000000);
+            long[] arr = GC.AllocateArray<long>(100000000, true);
             int i = 1;
             while (i <= 100000000 && (DateTime.Now - start).TotalSeconds <= timeExec) 
             {
@@ -22,7 +24,6 @@ namespace WorkerService1
                 i++;
             }
 
-            arr.Clear();
             Task.Delay(Math.Max(Convert.ToInt32(timeExec - (DateTime.Now - start).TotalSeconds)*1000, 0));
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)

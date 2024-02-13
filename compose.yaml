@@ -7,10 +7,6 @@ services:
     expose:
       - 1234
     restart: unless-stopped
-    volumes:
-      - worker_app:/app
-    networks:
-      - monitor_net
 
   prometheus:
     image: prom/prometheus:v2.48.0
@@ -28,8 +24,6 @@ services:
     restart: unless-stopped
     expose:
       - 9090
-    networks:
-      - monitor_net
 
   grafana:
     image: grafana/grafana:10.2.2
@@ -44,8 +38,6 @@ services:
     restart: unless-stopped
     expose:
       - 3000
-    networks:
-      - monitor_net
 
   web_server:
     container_name: nginx_server
@@ -56,14 +48,7 @@ services:
     restart: unless-stopped
     ports:
       - 80:80
-    networks:
-      - monitor_net
 
 volumes:
-  worker_app:
   grafana_data:
   prometheus_data:
-
-networks:
-  monitor_net:
-    driver: bridge
