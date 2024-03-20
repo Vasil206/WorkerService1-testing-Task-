@@ -48,6 +48,13 @@ services:
     restart: unless-stopped
     ports:
       - 80:80
+ 
+  messages_server:
+    image:  nats
+    container_name: nats_server
+    command: "-c /nats_config.conf"
+    volumes:
+      - ./docker_bind_data/nats-server/nats_config.conf:/nats_config.conf
 
 volumes:
   grafana_data:

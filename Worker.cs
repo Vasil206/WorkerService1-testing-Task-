@@ -9,21 +9,24 @@ namespace WorkerService1
     {
         private readonly ILogger<Worker> _logger;
         private readonly IOptionsMonitor<Data> _dataMonitor;
+        private readonly IDisposable? _onDataChange;
         private bool _dataChanged;
 
+        private Dictionary<NameId, CpuRssValue> _measurements;
         private readonly Meter _meter;
 
-        private async Task<KeyValuePair<NameId, CpuRssValue>> DoWorkAsync(Process proc, int interval)
+        private async Task<KeyValuePair<NameId, CpuRssValue>> DoWorkAsync(Process proc)
         {
-            double usageCpuTotal;
             NameId nameId = new NameId(proc.Id, proc.ProcessName);
+
+            double usageCpuTotal;
             try
             {
                 if (proc.HasExited) throw new Exception("process has exited");
                 TimeSpan startUsageCpu = proc.TotalProcessorTime;
                 long startTime = Environment.TickCount64;
 
-                await Task.Delay(interval / 2);
+                await Task.Delay(_dataMonitor.CurrentValue.Interval / 2);
 
                 if (proc.HasExited) throw new Exception("process has exited");
                 TimeSpan endUsageCpu = proc.TotalProcessorTime;
@@ -69,17 +72,30 @@ namespace WorkerService1
             return new KeyValuePair<NameId, CpuRssValue>(nameId,
                                                         new CpuRssValue(usageCpuTotal, rss));
         }
-
         public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
         {
             _dataChanged = false;
             _logger = logger;
 
             _dataMonitor = dataMonitor;
-            _dataMonitor.OnChange(_ => _dataChanged = true);
+            _onDataChange = _dataMonitor.OnChange(_ => _dataChanged = true);
+
+            _measurements = new();
             _meter = new("cpu_rss_watcher");
         }
 
+        private IEnumerable<Measurement<double>> ObserveValues(Func<CpuRssValue, double> getVal)
+        {
+            LinkedList<Measurement<double>> result = new();
+            foreach (var measurement in _measurements)
+            {
+                result.AddLast(new Measurement<double>(getVal(measurement.Value),
+                    new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
+                    new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
+            }
+
+            return result;
+        }
         private void ClearMeasurements(ref Dictionary<NameId, CpuRssValue> measurements)
         {
             var keys = measurements.Keys;
@@ -95,40 +111,21 @@ namespace WorkerService1
         {
             try
             {
-                Dictionary<NameId, CpuRssValue> measurements = new();
-                _meter.CreateObservableGauge("worker_processes_usage_cpu", () =>
-                {
-                    LinkedList<Measurement<double>> result = new();
-                    foreach (var measurement in measurements)
-                    {
-                        result.AddLast(new Measurement<double>(measurement.Value.Cpu,
-                            new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
-                            new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
-                    }
+                //metrics get
+                IEnumerable<Measurement<double>> ObserveCpu() => ObserveValues(val => val.Cpu);
+                _meter.CreateObservableGauge("worker_processes_usage_cpu", ObserveCpu, unit: "%");
+                
+                IEnumerable<Measurement<double>> ObserveRss() => ObserveValues(val => val.Rss);
+                _meter.CreateObservableGauge("worker_processes_usage_rss", ObserveRss, unit: "mb");
 
-                    return result;
-                }, unit: "%");
-                _meter.CreateObservableGauge("worker_processes_usage_rss", () =>
-                {
-                    LinkedList<Measurement<double>> result = new();
-                    foreach (var measurement in measurements)
-                    {
-                        result.AddLast(new Measurement<double>(measurement.Value.Rss,
-                            new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
-                            new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
-                    }
-
-                    return result;
-                }, unit: "mb");
 
                 string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
-                int interval = _dataMonitor.CurrentValue.Interval;
-
-                PeriodicTimer timer = new(TimeSpan.FromMilliseconds(interval));
+                PeriodicTimer timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_dataMonitor.CurrentValue.Interval));
+                //set
                 while (await timer.WaitForNextTickAsync(stoppingToken))
                 {
                     //going from names to Process
-                    Process[][] processes = new Process[processNames.Length][];
+                    var processes = new Process[processNames.Length][];
                     if (processNames[0] == "--all")
                         processes[0] = Process.GetProcesses();
                     else
@@ -148,11 +145,11 @@ namespace WorkerService1
                         for (int j = 0; j < metricsLoop[i].Length; j++)
                         {
                             metricsLoop[i][j] =
-                                DoWorkAsync(processes[i][j], interval); //starting of the calculating of CPU usage
+                                DoWorkAsync(processes[i][j]); //starting of the calculating of CPU usage
                         }
                     }
 
-                    ClearMeasurements(ref measurements);
+                    ClearMeasurements(ref _measurements);
 
                     //wait while works
                     foreach (Task[] useCpu in metricsLoop)
@@ -163,30 +160,26 @@ namespace WorkerService1
                     foreach (var result in results)
                     {
                         bool isAdded = false;
-                        foreach (var measurement in measurements)
+                        foreach (var measurement in _measurements)
                         {
                             if (measurement.Key.SequenceEqual(result.Result.Key))
                             {
-                                measurements[measurement.Key] = result.Result.Value;
+                                _measurements[measurement.Key] = result.Result.Value;
                                 isAdded = true;
                                 break;
                             }
                         }
                         if(!isAdded)
-                            measurements.Add(result.Result.Key,result.Result.Value);
+                            _measurements.Add(result.Result.Key,result.Result.Value);
                     }
 
                     //on data change
                     if (_dataChanged)
                     {
-                        _dataChanged = false;
+                        _dataChanged=false;
                         processNames = _dataMonitor.CurrentValue.ProcessNames;
-                        if (interval != _dataMonitor.CurrentValue.Interval)
-                        {
-                            interval = _dataMonitor.CurrentValue.Interval;
-                            timer.Dispose();
-                            timer = new PeriodicTimer(TimeSpan.FromMilliseconds(interval));
-                        }
+                        timer.Dispose();
+                        timer = new(TimeSpan.FromMilliseconds(_dataMonitor.CurrentValue.Interval));
                     }
                 }
             }
@@ -197,6 +190,7 @@ namespace WorkerService1
             finally
             {
                 _meter.Dispose();
+                _onDataChange?.Dispose();
             }
         }
 
