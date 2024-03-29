@@ -1,3 +1,5 @@
+version: "3.1"
+
 services:
   worker:
     container_name: cpu_rss_wacher
@@ -55,7 +57,9 @@ services:
     command: "-c /nats_config.conf"
     volumes:
       - ./docker_bind_data/nats-server/nats_config.conf:/nats_config.conf
+      - tmp_nats:/tmp/nats
 
 volumes:
   grafana_data:
   prometheus_data:
+  tmp_nats:
