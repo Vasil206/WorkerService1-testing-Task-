@@ -25,10 +25,29 @@ namespace WorkerService1
         private readonly Dictionary<NameId, CpuRssValue> _measurements;
         private readonly Meter _meter;
 
+
+        public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
+        {
+            _nats = new NatsConnection(NatsOpts.Default with{Url = "nats://nats_server:4222" });
+            _js = new NatsJSContext(_nats);
+
+            _dataChanged = false;
+            _logger = logger;
+
+            _dataMonitor = dataMonitor;
+            _onDataChange = _dataMonitor.OnChange(_ => _dataChanged = true);
+
+            _measurements = new();
+            _meter = new("cpu_rss_watcher");
+        }
+
+
         private async Task<KeyValuePair<NameId, CpuRssValue>> DoWorkAsync(Process proc)
         {
             var nameId = new NameId(proc.Id, proc.ProcessName);
 
+
+            ////////////////////////////////////////////////////////////////////////////////////////////
             double usageCpuTotal;
             try
             {
@@ -50,7 +69,7 @@ namespace WorkerService1
             catch (Win32Exception ex)
             {
                 usageCpuTotal = -ex.NativeErrorCode;
-                //_logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}    CPU");
+                _logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}    CPU");
             }
             catch when (proc.HasExited)
             {
@@ -62,6 +81,7 @@ namespace WorkerService1
                 usageCpuTotal = -404;
             }
 
+            ////////////////////////////////////////////////////////////////////////////////////////////
             double rss;
             try
             {
@@ -71,7 +91,7 @@ namespace WorkerService1
             }
             catch (Win32Exception ex)
             {
-                //_logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}    RSS");
+                _logger.LogWarning($"{nameId.Name} : {nameId.Id} => {ex.Message}    RSS");
                 rss = -ex.NativeErrorCode;
             }
             catch (Exception ex)
@@ -80,23 +100,11 @@ namespace WorkerService1
                 rss = -404;
             }
 
+
             return new KeyValuePair<NameId, CpuRssValue>(nameId,
                                                         new CpuRssValue(usageCpuTotal, rss));
         }
-        public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
-        {
-            _nats = new NatsConnection(NatsOpts.Default with{Url = "nats://nats_server:4222" });
-            _js = new NatsJSContext(_nats);
 
-            _dataChanged = false;
-            _logger = logger;
-
-            _dataMonitor = dataMonitor;
-            _onDataChange = _dataMonitor.OnChange(_ => _dataChanged = true);
-
-            _measurements = new();
-            _meter = new("cpu_rss_watcher");
-        }
 
         private IEnumerable<Measurement<double>> ObserveValues(Func<CpuRssValue, double> getVal)
         {
@@ -110,80 +118,58 @@ namespace WorkerService1
 
             return result;
         }
-        private void ClearMeasurements(CancellationToken stoppingToken)
+
+
+        private async void SetNatsStreamAsync(CancellationToken stoppingToken)
         {
-            var keys = _measurements.Keys;
-
-            Parallel.ForEach(keys, ClearPlusExitedMessageAsync);
-            return;
-
-            async void ClearPlusExitedMessageAsync(NameId key)
+            INatsJSStream? stream;
+            try
             {
-                try
-                {
-                    if (_measurements[key].IsUsed)
-                    {
-                        var ack = await _js.PublishAsync($"{SubjectName}.{key.Name}.{key.Id}", "Exited",
-                            cancellationToken: stoppingToken);
-                        ack.EnsureSuccess();
+                stream = await _js.GetStreamAsync(StreamName, cancellationToken: stoppingToken);
+                _logger.LogInformation("Stream got successfully");
+            }
+            catch (NatsJSApiException e) when (e.Error.ErrCode == 10059)
+            {
+                stream = await _js.CreateStreamAsync(
+                    new StreamConfig(StreamName, new[] { $"{SubjectName}.>" }),
+                    stoppingToken);
+                _logger.LogInformation("Stream created successfully");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e.Message);
+                throw;
+            }
 
-                        _measurements.Remove(key);
-                    }
-                    else
-                        _measurements[key].IsUsed = true;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex.Message);
-                }
+            if (stream.Info.Config.MaxMsgsPerSubject != 1)
+            {
+                stream.Info.Config.MaxMsgsPerSubject = 1;
+                await stream.UpdateAsync(stream.Info.Config, stoppingToken);
+                _logger.LogInformation("Stream config updated successfully");
             }
         }
+
+
+        private void MetricsGetters()
+        {
+            IEnumerable<Measurement<double>> ObserveCpu() => ObserveValues(val => val.Cpu);
+            _meter.CreateObservableGauge("worker_processes_usage_cpu", ObserveCpu, unit: "%");
+
+            IEnumerable<Measurement<double>> ObserveRss() => ObserveValues(val => val.Rss);
+            _meter.CreateObservableGauge("worker_processes_usage_rss", ObserveRss, unit: "mb");
+        }
+
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
             {
-                //nats
-                INatsJSStream? stream;
-                try
-                {
-                    stream = await _js.GetStreamAsync(StreamName, cancellationToken: stoppingToken);
-                    _logger.LogInformation("Stream got successfully");
-                }
-                catch (NatsJSApiException e) when (e.Error.ErrCode == 10059)
-                {
-                    stream = await _js.CreateStreamAsync(
-                        new StreamConfig(StreamName, new[] { $"{SubjectName}.>" }),
-                        stoppingToken);
-                    _logger.LogInformation("Stream created successfully");
-                }
-                catch (Exception e)
-                {
-                    _logger.LogError(e.Message);
-                    throw;
-                }
+                SetNatsStreamAsync(stoppingToken);
 
-                var goodStreamConfig = new StreamConfig(StreamName, new[] { $"{SubjectName}.>" })
-                                            {
-                                                MaxMsgsPerSubject = 1
-                                            };
-                if (stream.Info.Config.Equals(goodStreamConfig))
-                {
-                    stream.Info.Config = goodStreamConfig;
-                    await _js.UpdateStreamAsync(stream.Info.Config, stoppingToken);
-                    _logger.LogInformation("Stream config updated successfully");
-                }
+                MetricsGetters();
 
 
-
-                //metrics get
-                IEnumerable<Measurement<double>> ObserveCpu() => ObserveValues(val => val.Cpu);
-                _meter.CreateObservableGauge("worker_processes_usage_cpu", ObserveCpu, unit: "%");
-
-                IEnumerable<Measurement<double>> ObserveRss() => ObserveValues(val => val.Rss);
-                _meter.CreateObservableGauge("worker_processes_usage_rss", ObserveRss, unit: "mb");
-
-
-
+                ////////////////////////////////////////////////////////////////////////////////////////
                 //set
                 string[] processNames = _dataMonitor.CurrentValue.ProcessNames;
                 var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_dataMonitor.CurrentValue.Interval));
@@ -214,6 +200,7 @@ namespace WorkerService1
                         }
                     }
 
+
                     ClearMeasurements(stoppingToken);
 
 
@@ -242,8 +229,7 @@ namespace WorkerService1
                     }
 
 
-                    //upload to nats
-                    Parallel.ForEach(_measurements, UploadToNatsAsync);
+                    UploadToNatsParallel(stoppingToken);
 
 
                     //on data change
@@ -254,27 +240,10 @@ namespace WorkerService1
                         timer.Dispose();
                         timer = new(TimeSpan.FromMilliseconds(_dataMonitor.CurrentValue.Interval));
                     }
-
-                    continue;
-
-                    async void UploadToNatsAsync(KeyValuePair<NameId, CpuRssValue> measurement)
-                    {
-                        try
-                        {
-                            var ack = await _js.PublishAsync(
-                                $"{SubjectName}.{measurement.Key.Name}.{measurement.Key.Id}",
-                                $"cpu: {measurement.Value.Cpu} || rss: {measurement.Value.Rss}",
-                                cancellationToken: stoppingToken);
-
-                            ack.EnsureSuccess();
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex.Message);
-                        }
-                    }
+                    
                 }
 
+                ////////////////////////////////////////////////////////////////////////////////////////
             }
             catch (Exception ex)
             {
@@ -285,6 +254,60 @@ namespace WorkerService1
                 _meter.Dispose();
                 _onDataChange?.Dispose();
                 await _nats.DisposeAsync();
+            }
+        }
+
+
+        private void ClearMeasurements(CancellationToken stoppingToken)
+        {
+            var keys = _measurements.Keys;
+
+            Parallel.ForEach(keys, ClearPlusExitedMessageAsync);
+            return;
+
+            async void ClearPlusExitedMessageAsync(NameId key)
+            {
+                try
+                {
+                    if (_measurements[key].IsUsed)
+                    {
+                        var ack = await _js.PublishAsync($"{SubjectName}.{key.Name}.{key.Id}", "Exited",
+                            cancellationToken: stoppingToken);
+                        ack.EnsureSuccess();
+
+                        _measurements.Remove(key);
+                    }
+                    else
+                        _measurements[key].IsUsed = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex.Message);
+                }
+            }
+        }
+
+
+        private void UploadToNatsParallel(CancellationToken stoppingToken)
+        {
+            Parallel.ForEach(_measurements, UploadToNatsAsync);
+            return;
+
+            async void UploadToNatsAsync(KeyValuePair<NameId, CpuRssValue> measurement)
+            {
+                try
+                {
+                    var ack = await _js.PublishAsync(
+                        $"{SubjectName}.{measurement.Key.Name}.{measurement.Key.Id}",
+                        $"cpu: {measurement.Value.Cpu} || rss: {measurement.Value.Rss}",
+                        cancellationToken: stoppingToken);
+
+                    ack.EnsureSuccess();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex.Message);
+                }
             }
         }
 

@@ -1,63 +1,62 @@
 version: "3.1"
 
 services:
+
   worker:
-    container_name: cpu_rss_wacher
     build:
       context: .
       target: final
-    expose:
-      - 1234
+
+    container_name: cpu_rss_wacher
+
     restart: unless-stopped
+
 
   prometheus:
-    image: prom/prometheus:v2.48.0
+    build:
+      context: ./containers/prometheus
+
     container_name: prometheus
+
     volumes:
       - prometheus_data:/prometheus
-      - ./docker_bind_data/etc/prometheus:/etc/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
-      - '--web.enable-lifecycle'
+
     restart: unless-stopped
-    expose:
-      - 9090
+
 
   grafana:
-    image: grafana/grafana:10.2.2
+    build:
+      context: ./containers/grafana
+
     container_name: grafana
+
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./docker_bind_data/etc/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-      - ./docker_bind_data/etc/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-    environment:
-      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/grafana/
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+
     restart: unless-stopped
-    expose:
-      - 3000
+
 
   web_server:
+    build:
+      context: ./containers/nginx
+
     container_name: nginx_server
-    image: nginx
-    volumes:
-      - ./docker_bind_data/etc/nginx:/etc/nginx/conf.d
-      - ./docker_bind_data/nginx/html/index.html:/usr/share/nginx/html/index.html
     restart: unless-stopped
     ports:
       - 80:80
  
+
   messages_server:
-    image:  nats
+    build:
+      context: ./containers/nats
+
     container_name: nats_server
-    command: "-c /nats_config.conf"
+
     volumes:
-      - ./docker_bind_data/nats-server/nats_config.conf:/nats_config.conf
       - tmp_nats:/tmp/nats
+
+    restart: unless-stopped
+
 
 volumes:
   grafana_data:
