@@ -21,7 +21,16 @@ namespace WorkerService1
 
     public class Data
     {
-        public  int Interval { get; set; }
-        public string[] ProcessNames { get; set; } = default!;
+        public  int Interval { get; init; }
+        public string[] ProcessNames { get; init; } = default!;
+    }
+
+    public class WorkerOptions
+    {
+        public static readonly WorkerOptions Default = new();
+        public string PrometheusConnection { get; set; } = "http://cpu_rss_wacher:1234/";
+        public string NatsConnection { get; set; } = "nats://nats_server:4222/";
+        public string StreamsAndSubjectsPrefix { get; set; } = "workerMetrics";
+        public string MeterName { get; set; } = "cpu_rss_watcher";
     }
 }

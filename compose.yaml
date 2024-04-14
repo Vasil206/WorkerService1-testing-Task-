@@ -53,7 +53,7 @@ services:
     container_name: nats_server
 
     volumes:
-      - tmp_nats:/tmp/nats
+      - nats_data:/tmp/nats
 
     restart: unless-stopped
 
@@ -61,4 +61,4 @@ services:
 volumes:
   grafana_data:
   prometheus_data:
-  tmp_nats:
+  nats_data:

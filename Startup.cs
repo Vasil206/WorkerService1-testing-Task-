@@ -16,11 +16,9 @@ namespace WorkerService1
             services.AddOpenTelemetry()
                 .WithMetrics(b =>
                 {
-                    string? outerHostName = _config.GetSection("OuterHostName").Value;
-                    var path = $"http://{outerHostName}:1234/";
-
-                    b.AddMeter("cpu_rss_watcher");
-                    b.AddPrometheusHttpListener(opt => opt.UriPrefixes = new []{path});
+                    b.AddMeter(WorkerOptions.Default.MeterName);
+                    b.AddPrometheusHttpListener(opt =>
+                                                opt.UriPrefixes = new[] { WorkerOptions.Default.PrometheusConnection });
                 });
             services.Configure<Data>(_config.GetSection("Data"));
             services.AddHostedService<Worker>();

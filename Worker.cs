@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Text;
 using Microsoft.Extensions.Options;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
@@ -8,11 +9,9 @@ using NATS.Client.JetStream.Models;
 
 namespace WorkerService1
 {
-    public class Worker : BackgroundService//////////////////////////SubjectName, StreamName,"nats://nats_server:4222", e.g. -- getting from config by IOption<T>
+    public class Worker : BackgroundService
     {
-        private const string SubjectName = "worker_metrics";
-        private const string StreamName = "worker_metrics";
-
+        private readonly string _streamsAndSubjectsPrefix;
         private readonly NatsConnection _nats;
         private readonly NatsJSContext _js;
 
@@ -22,13 +21,14 @@ namespace WorkerService1
         private readonly IDisposable? _onDataChange;
         private bool _dataChanged;
 
-        private readonly Dictionary<NameId, CpuRssValue> _measurements;
+        private readonly Dictionary<string, CpuRssValue> _measurements;
         private readonly Meter _meter;
 
 
         public Worker(ILogger<Worker> logger, IOptionsMonitor<Data> dataMonitor)
         {
-            _nats = new NatsConnection(NatsOpts.Default with{Url = "nats://nats_server:4222" });
+            _streamsAndSubjectsPrefix = WorkerOptions.Default.StreamsAndSubjectsPrefix;
+            _nats = new NatsConnection(NatsOpts.Default with{Url = WorkerOptions.Default.NatsConnection });
             _js = new NatsJSContext(_nats);
 
             _dataChanged = false;
@@ -38,7 +38,7 @@ namespace WorkerService1
             _onDataChange = _dataMonitor.OnChange(_ => _dataChanged = true);
 
             _measurements = new();
-            _meter = new("cpu_rss_watcher");
+            _meter = new(WorkerOptions.Default.MeterName);
         }
 
 
@@ -111,44 +111,17 @@ namespace WorkerService1
             LinkedList<Measurement<double>> result = new();
             foreach (var measurement in _measurements)
             {
+                string[] nameId = measurement.Key
+                                            .Remove(0, _streamsAndSubjectsPrefix.Length + 1)
+                                            .Split('#');
+
                 result.AddLast(new Measurement<double>(getVal(measurement.Value),
-                    new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
-                    new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
+                    new KeyValuePair<string, object?>("process_name", nameId[0]),
+                    new KeyValuePair<string, object?>("process_id", nameId[1])));
             }
 
             return result;
         }
-
-
-        private async void SetNatsStreamAsync(CancellationToken stoppingToken)
-        {
-            INatsJSStream? stream;
-            try
-            {
-                stream = await _js.GetStreamAsync(StreamName, cancellationToken: stoppingToken);
-                _logger.LogInformation("Stream got successfully");
-            }
-            catch (NatsJSApiException e) when (e.Error.ErrCode == 10059)
-            {
-                stream = await _js.CreateStreamAsync(
-                    new StreamConfig(StreamName, new[] { $"{SubjectName}.>" }),
-                    stoppingToken);
-                _logger.LogInformation("Stream created successfully");
-            }
-            catch (Exception e)
-            {
-                _logger.LogError(e.Message);
-                throw;
-            }
-
-            if (stream.Info.Config.MaxMsgsPerSubject != 1)
-            {
-                stream.Info.Config.MaxMsgsPerSubject = 1;
-                await stream.UpdateAsync(stream.Info.Config, stoppingToken);
-                _logger.LogInformation("Stream config updated successfully");
-            }
-        }
-
 
         private void MetricsGetters()
         {
@@ -164,8 +137,6 @@ namespace WorkerService1
         {
             try
             {
-                SetNatsStreamAsync(stoppingToken);
-
                 MetricsGetters();
 
 
@@ -201,7 +172,7 @@ namespace WorkerService1
                     }
 
 
-                    ClearMeasurements(stoppingToken);
+                    ClearMeasurementsAndStreams(stoppingToken);
 
 
                     //wait while works
@@ -209,25 +180,10 @@ namespace WorkerService1
                         Task.WaitAll(useCpu, stoppingToken);
 
 
-                    //add to measurements
-                    foreach (var results in metricsLoop)
-                    foreach (var result in results)
-                    {
-                        bool isAdded = false;
-                        foreach (var measurement in _measurements)
-                        {
-                            if (measurement.Key.SequenceEqual(result.Result.Key))
-                            {
-                                _measurements[measurement.Key] = result.Result.Value;
-                                isAdded = true;
-                                break;
-                            }
-                        }
-
-                        if (!isAdded)
-                            _measurements.Add(result.Result.Key, result.Result.Value);
-                    }
-
+                    //add to measurements   and   set nats streams
+                    Parallel.ForEach(metricsLoop, results =>
+                        Parallel.ForEach(results, result =>
+                            SetStreamAndMeasurementAsync(result.Result, stoppingToken)));
 
                     UploadToNatsParallel(stoppingToken);
 
@@ -258,24 +214,25 @@ namespace WorkerService1
         }
 
 
-        private void ClearMeasurements(CancellationToken stoppingToken)
+        private void ClearMeasurementsAndStreams(CancellationToken stoppingToken)
         {
-            var keys = _measurements.Keys;
-
-            Parallel.ForEach(keys, ClearPlusExitedMessageAsync);
+            Parallel.ForEach(_measurements.Keys, ClearAndDelStream);
             return;
 
-            async void ClearPlusExitedMessageAsync(NameId key)
+            async void ClearAndDelStream(string key)
             {
                 try
                 {
                     if (_measurements[key].IsUsed)
                     {
-                        var ack = await _js.PublishAsync($"{SubjectName}.{key.Name}.{key.Id}", "Exited",
-                            cancellationToken: stoppingToken);
-                        ack.EnsureSuccess();
-
+                        
                         _measurements.Remove(key);
+
+                        var streamName = new StringBuilder($"{_streamsAndSubjectsPrefix}.{key}");
+
+                        streamName.Replace('.', '_');
+                        streamName.Replace(' ', '_');
+                        await _js.DeleteStreamAsync(streamName.ToString(), stoppingToken);
                     }
                     else
                         _measurements[key].IsUsed = true;
@@ -293,12 +250,12 @@ namespace WorkerService1
             Parallel.ForEach(_measurements, UploadToNatsAsync);
             return;
 
-            async void UploadToNatsAsync(KeyValuePair<NameId, CpuRssValue> measurement)
+            async void UploadToNatsAsync(KeyValuePair<string, CpuRssValue> measurement)
             {
                 try
                 {
                     var ack = await _js.PublishAsync(
-                        $"{SubjectName}.{measurement.Key.Name}.{measurement.Key.Id}",
+                        measurement.Key,
                         $"cpu: {measurement.Value.Cpu} || rss: {measurement.Value.Rss}",
                         cancellationToken: stoppingToken);
 
@@ -311,7 +268,53 @@ namespace WorkerService1
             }
         }
 
+        private async void SetStreamAndMeasurementAsync(KeyValuePair<NameId, CpuRssValue> measurement, CancellationToken stoppingToken)
+        {
+            StringBuilder streamNameOrSubject = new StringBuilder();
+            streamNameOrSubject.Append($"{_streamsAndSubjectsPrefix}.{measurement.Key.ToString()}");
+            string subject = streamNameOrSubject.ToString();
+
+            streamNameOrSubject.Replace('.', '_');
+            streamNameOrSubject.Replace(' ', '_');
+            string name = streamNameOrSubject.ToString();
+
+            try
+            {
+                INatsJSStream? stream;
+                if (_measurements.ContainsKey(subject))
+                {
+                    _measurements[subject] = measurement.Value;
+
+                    stream = await _js.GetStreamAsync(name, cancellationToken: stoppingToken);
+                }
+                else
+                {
+                    _measurements.Add(subject, measurement.Value);
+
+                    stream = await _js.CreateStreamAsync(
+                        new StreamConfig(name, new[] { subject }),
+                        stoppingToken);
+                }
+
+                if (stream.Info.Config.MaxMsgs != 1)
+                {
+                    stream.Info.Config.MaxMsgs = 1;
+                    await stream.UpdateAsync(stream.Info.Config, stoppingToken);
+                }
+
+            }
+            catch (NatsJSApiException e) when (e.Error.ErrCode == 10058 || e.Error.ErrCode == 10059)
+            {
+                _logger.LogWarning(e.Message);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e.Message);
+            }
+        }
+
     }
+
     class NameId
     {
         public readonly int Id;
@@ -321,10 +324,8 @@ namespace WorkerService1
             Id = id;
             Name = name;
         }
-        public bool SequenceEqual( NameId target)
-        {
-            return Name == target.Name && Id == target.Id;
-        }
+
+        public override string ToString() => $"{Name}#{Id}";
     }
 
     class CpuRssValue
