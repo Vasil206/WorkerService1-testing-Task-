@@ -21,7 +21,7 @@ namespace WorkerService1
         private readonly IDisposable? _onDataChange;
         private bool _dataChanged;
 
-        private readonly Dictionary<string, CpuRssValue> _measurements;
+        private readonly Dictionary<NameId, CpuRssValue> _measurements;
         private readonly Meter _meter;
 
 
@@ -111,13 +111,9 @@ namespace WorkerService1
             LinkedList<Measurement<double>> result = new();
             foreach (var measurement in _measurements)
             {
-                string[] nameId = measurement.Key
-                                            .Remove(0, _streamsAndSubjectsPrefix.Length + 1)
-                                            .Split('#');
-
                 result.AddLast(new Measurement<double>(getVal(measurement.Value),
-                    new KeyValuePair<string, object?>("process_name", nameId[0]),
-                    new KeyValuePair<string, object?>("process_id", nameId[1])));
+                    new KeyValuePair<string, object?>("process_name", measurement.Key.Name),
+                    new KeyValuePair<string, object?>("process_id", measurement.Key.Id)));
             }
 
             return result;
@@ -219,7 +215,7 @@ namespace WorkerService1
             Parallel.ForEach(_measurements.Keys, ClearAndDelStream);
             return;
 
-            async void ClearAndDelStream(string key)
+            async void ClearAndDelStream(NameId key)
             {
                 try
                 {
@@ -250,12 +246,12 @@ namespace WorkerService1
             Parallel.ForEach(_measurements, UploadToNatsAsync);
             return;
 
-            async void UploadToNatsAsync(KeyValuePair<string, CpuRssValue> measurement)
+            async void UploadToNatsAsync(KeyValuePair<NameId, CpuRssValue> measurement)
             {
                 try
                 {
                     var ack = await _js.PublishAsync(
-                        measurement.Key,
+                        $"{_streamsAndSubjectsPrefix}.{measurement.Key}",
                         $"cpu: {measurement.Value.Cpu} || rss: {measurement.Value.Rss}",
                         cancellationToken: stoppingToken);
 
@@ -281,15 +277,15 @@ namespace WorkerService1
             try
             {
                 INatsJSStream? stream;
-                if (_measurements.ContainsKey(subject))
+                if (_measurements.ContainsKey(measurement.Key))
                 {
-                    _measurements[subject] = measurement.Value;
+                    _measurements[measurement.Key] = measurement.Value;
 
                     stream = await _js.GetStreamAsync(name, cancellationToken: stoppingToken);
                 }
                 else
                 {
-                    _measurements.Add(subject, measurement.Value);
+                    _measurements.Add(measurement.Key, measurement.Value);
 
                     stream = await _js.CreateStreamAsync(
                         new StreamConfig(name, new[] { subject }),
@@ -315,7 +311,7 @@ namespace WorkerService1
 
     }
 
-    class NameId
+    internal readonly struct NameId
     {
         public readonly int Id;
         public readonly string Name;
